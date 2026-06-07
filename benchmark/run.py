@@ -35,7 +35,7 @@ from pqpo.harness import (GENERATOR_METHOD_NAMES, METHOD_NAMES, run_all_selector
                           run_source_method_baselines)
 from pqpo.logging_utils.cost_ledger import CostLedger
 from pqpo.logging_utils.parallel import thread_map
-from pqpo.logging_utils.progress import metrics_table, rule, titer
+from pqpo.logging_utils.progress import make_bar, metrics_table, rule, titer
 from pqpo.quotient.clusterer import QuotientClusterer, agglomerative_labels
 from pqpo.selectors.base import SelectorContext
 from pqpo.stats.analysis import aubc, holm_bonferroni, paired_bootstrap_diff, spearman
@@ -96,7 +96,7 @@ def make_seed_prompts(spec, profile_ids):
 
 
 def get_sizes(args):
-    base = dict(n_sentinel=12, n_dev=args.n_dev, n_test=args.n_test,
+    base = dict(n_sentinel=args.n_sentinel, n_dev=args.n_dev, n_test=args.n_test,
                 n_pool=args.n_pool, n_profiles=args.n_profiles, constraints=4)
     return base
 
@@ -172,7 +172,10 @@ def run_one_benchmark(name, args, sel_methods, gen_methods, mipro_auto):
                                np.random.default_rng(100 * s + b), b, fps, D, ids,
                                embeddings, sm)
 
-    for b in titer(args.budgets, desc=f"{name} budgets", total=len(args.budgets)):
+    # Live metric in the progress bar: running PQPO score + current leader.
+    bar = make_bar(len(args.budgets) * len(args.seeds),
+                   f"{name} sweep [{mod.metric_name}]")
+    for b in args.budgets:
         for s in args.seeds:
             res = run_all_selectors(lambda: factory(b, s), n_cells, sizes_c,
                                     embeddings, embeddings, tau=tau, methods=sel_methods)
@@ -181,6 +184,14 @@ def run_one_benchmark(name, args, sel_methods, gen_methods, mipro_auto):
                 ho = held(next(p for p in pool if p.prompt_id == r.selected_prompt_id))
                 heldout[m].setdefault(b, []).append(float(ho.mean()))
                 perex[m][(b, s)] = ho
+            # running means across everything seen so far
+            means = {m: float(np.mean([v for bb in heldout[m] for v in heldout[m][bb]]))
+                     for m in heldout if heldout[m]}
+            leader = max(means, key=means.get) if means else "-"
+            bar.update(1)
+            bar.set_postfix(budget=b, pqpo=f"{means.get('pqpo', float('nan')):.3f}",
+                            leader=f"{leader}:{means.get(leader, 0):.3f}")
+    bar.close()
 
     return report_one(name, args, mod, pool, cells, redundancy, ari, transfer,
                       heldout, perex, per_prompt_ho, ledger)
@@ -223,6 +234,11 @@ def report_one(name, args, mod, pool, cells, redundancy, ari, transfer,
                       [["best generator output", f"{best_gen:.3f} ({best_gen_m})"],
                        ["PQPO matches it at", msg],
                        ["pool size", str(len(pool))]])
+    eff = None
+    if gens_present and heldout.get("pqpo"):
+        eff = {"best_generator": best_gen_m, "best_generator_score": best_gen,
+               "pqpo_matches_at_budget": hit,
+               "fraction_of_pool": (hit / len(pool)) if hit is not None else None}
     # PQPO vs every other method @ max budget (Holm)
     pvals, diffs = {}, {}
     for m in heldout:
@@ -241,9 +257,22 @@ def report_one(name, args, mod, pool, cells, redundancy, ari, transfer,
                   [[m, f"{diffs[m]:+.3f}", f"{holm[m]['adjusted_p']:.4f}",
                     "sig" if holm[m]["reject_null"] else "ns"]
                    for m in sorted(diffs, key=lambda k: -diffs[k])])
-    return {"benchmark": name, "metric": mod.metric_name, "aubc_by_method": aubc_by,
-            "redundancy": redundancy, "ari": ari, "transfer": transfer,
-            "dollar_cost": ledger.aggregate_all()["dollar_cost"]}
+    return {
+        "benchmark": name, "modality": mod.modality, "metric": mod.metric_name,
+        "n_prompts": len(pool), "n_cells": len(cells),
+        "compression": 1 - len(cells) / len(pool),
+        "redundancy": redundancy, "cluster_stability_ari": ari,
+        "oracle_best_heldout": (max(per_prompt_ho.values()) if per_prompt_ho else None),
+        "distance_transfer": transfer,
+        "aubc_by_method": aubc_by,
+        "heldout_by_method_budget": {m: {int(b): float(np.mean(heldout[m][b]))
+                                         for b in heldout[m]} for m in heldout if heldout[m]},
+        "pqpo_vs_methods_at_max_budget": {
+            m: {"delta": diffs[m], "adjusted_p": holm[m]["adjusted_p"],
+                "significant": bool(holm[m]["reject_null"])} for m in diffs},
+        "budget_efficiency": eff,
+        "dollar_cost": ledger.aggregate_all()["dollar_cost"],
+    }
 
 
 def main():
@@ -261,11 +290,19 @@ def main():
     ap.add_argument("--budgets", type=str, default="48,96,192",
                     help="comma-separated labelled budgets")
     ap.add_argument("--seeds", type=int, default=3, help="number of seeds (0..n-1)")
+    ap.add_argument("--n-sentinel", type=int, default=12,
+                    help="number of unlabelled sentinel probes (longer fingerprint "
+                         "= finer phenotype discrimination; raise if the pool "
+                         "collapses to very few cells)")
     ap.add_argument("--n-dev", type=int, default=100)
     ap.add_argument("--n-test", type=int, default=100)
     ap.add_argument("--n-pool", type=int, default=48)
     ap.add_argument("--n-profiles", type=int, default=10)
     ap.add_argument("--n-boot", type=int, default=15)
+    ap.add_argument("--report-json", nargs="?", const="__auto__", default=None,
+                    metavar="PATH",
+                    help="write all results to a JSON file (give a path, or pass the "
+                         "flag alone for artifacts/benchmark_report_<timestamp>.json)")
     ap.add_argument("--skip-transfer", action="store_true",
                     help="skip the per-prompt held-out oracle/distance-transfer "
                          "analysis (scores every pool prompt on the full test set); "
@@ -304,6 +341,35 @@ def main():
         metrics_table("Cross-benchmark summary — PQPO AUBC and best baseline",
                       ["benchmark", "metric", "PQPO AUBC", "best-baseline AUBC", "PQPO rank"],
                       [_summary_row(s) for s in summaries])
+
+    if args.report_json is not None:
+        _write_json_report(args, summaries)
+
+
+def _write_json_report(args, summaries):
+    import datetime
+    import json
+    path = args.report_json
+    if path == "__auto__":
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(here, "artifacts", f"benchmark_report_{ts}.json")
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    payload = {
+        "config": {
+            "benchmarks": args.benchmarks, "source": args.source, "pool": args.pool,
+            "provider": args.provider, "model": args.model,
+            "temperature": args.temperature, "budgets": args.budgets,
+            "seeds": len(args.seeds), "n_sentinel": args.n_sentinel,
+            "n_dev": args.n_dev, "n_test": args.n_test, "n_pool": args.n_pool,
+            "per_method_size": args.per_method_size, "generations": args.generations,
+            "mipro_auto": args.mipro_auto, "skip_transfer": args.skip_transfer,
+        },
+        "results": summaries,
+    }
+    with open(path, "w") as fh:
+        json.dump(payload, fh, indent=2)
+    print(f"\n  [report] wrote JSON results to {path}")
 
 
 def _summary_row(s):

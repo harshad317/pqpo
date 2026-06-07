@@ -177,7 +177,16 @@ shared set of flags via `pqpo/cli.py`:
 --parallel-backend {thread,process} thread for real APIs, process for sim/offline
 --methods M [M ...]                 subset of methods to run (default: all)
 --list-methods                      print available methods and exit
+--n-sentinel N                      sentinel probes (longer fingerprint = finer cells)
+--report-json [PATH]                write all results to JSON (auto path if omitted)
+--skip-transfer                     skip the costly per-prompt oracle/transfer analysis
 ```
+
+The sweep progress bar shows the metric live (`… sweep [accuracy]: … pqpo=0.79
+leader=APE:0.81`). `--report-json` writes a machine-readable file with, per
+benchmark: phenotype metrics (cells, compression, redundancy, ARI, transfer),
+AUBC by method, per-budget held-out scores, the Holm-corrected PQPO-vs-each table,
+budget-efficiency, and dollar cost — ready to pull into the paper.
 
 `--methods` selects which methods to run and compare — selectors/controls
 (`pqpo`, `successive_halving`, `lexical_cluster`, …) and, for the benchmark

@@ -124,22 +124,35 @@ def if_items_to_examples(items: list[IFItem], task_id: str = "ifbench") -> list[
 # --------------------------------------------------------------------------- #
 class IFBehaviorFingerprintExtractor:
     """Fingerprint = per-(item, constraint) satisfaction vector. Behavioural
-    equivalence = satisfies the same constraints on the same sentinel items."""
+    equivalence = satisfies the same constraints on the same sentinel items.
+
+    use_shape=True also folds response length/format into the fingerprint so
+    prompts discriminate even when constraint-satisfaction is uniformly low (the
+    common real-IFBench regime, where most constraints fail regardless of prompt)."""
+
+    def __init__(self, use_shape: bool = True):
+        self.use_shape = use_shape
 
     def extract(self, prompt: CandidatePrompt, sentinel_items: list[IFItem], executor):
         from ..data.datastructures import BehaviorFingerprint
+        from ..fingerprints.extractor import bucket_output_length
         answers, fmt, refusal, errs, lenb, tok, lat = [], [], [], [], [], [], []
         for item in sentinel_items:
             ex = TaskExample(item.item_id, prompt.task_id, item.prompt, None,
                              {"if_item": item})
             trace = executor.run_prompt_on_example(prompt, ex, call_type="sentinel")
             sat = check_item(trace.output_text, item)
+            # Response-shape signal: length + a coarse format signature, so prompts
+            # discriminate even when constraint-satisfaction is uniformly low (the
+            # common IFBench regime). Included via the shape/token distance terms.
+            lb = bucket_output_length(trace.output_tokens) if self.use_shape else 0
             for s in sat:
                 answers.append("sat" if s else "unsat")
                 fmt.append(True)
                 refusal.append(trace.output_text.strip() == "")
-                errs.append("sat" if s else "unsat")
-                lenb.append(0); tok.append(0); lat.append(0)
+                errs.append(("sat" if s else "unsat") + (f"|L{lb}" if self.use_shape else ""))
+                lenb.append(lb); tok.append(trace.output_tokens if self.use_shape else 0)
+                lat.append(0)
         return BehaviorFingerprint(
             prompt_id=prompt.prompt_id, task_id=prompt.task_id,
             normalized_answers=answers, format_validity=fmt, refusal_flags=refusal,
