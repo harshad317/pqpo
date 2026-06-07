@@ -227,8 +227,9 @@ def load_ifbench(n_sentinel=12, n_dev=80, n_test=100, seed=0, source="hf",
                 "would score 0.\n\nOne-time setup:\n"
                 "  pip install datasets\n"
                 "  git clone https://github.com/allenai/IFBench\n"
-                "  export PYTHONPATH=\"$PYTHONPATH:/path/to/IFBench/IFBench\"  "
-                "# dir containing instructions_registry.py\n\n"
+                "  pip install -r IFBench/requirements.txt\n"
+                "  export IFBENCH_DIR=/abs/path/to/IFBench   "
+                "# the REPO ROOT (where instructions_registry.py lives)\n\n"
                 "Then re-run. (The simulated path, --source sim, needs none of this.)")
         from datasets import load_dataset
         ds = load_dataset(dataset, split="train")

@@ -110,8 +110,18 @@ One-time setup:
 ```bash
 pip install datasets
 git clone https://github.com/allenai/IFBench
-export PYTHONPATH="$PYTHONPATH:/path/to/IFBench/IFBench"   # dir with instructions_registry.py
+pip install -r IFBench/requirements.txt          # checker deps (spacy, nltk, ...)
+export IFBENCH_DIR="$(pwd)/IFBench"              # the REPO ROOT (instructions_registry.py is here)
 export OPENAI_API_KEY=sk-...
+```
+
+`instructions_registry.py` lives at the IFBench repo **root** and imports
+`instructions` (also at root), so point `IFBENCH_DIR` at the repo root — not a
+subdirectory. (`export PYTHONPATH=$PYTHONPATH:/abs/path/to/IFBench` works too.)
+Sanity-check the hook before a real run:
+
+```bash
+python -c "from pqpo.evaluation.ifbench_official import official_available; print('official verifiers:', official_available())"
 ```
 
 Validate cheaply first (small test split, few methods), then scale up:

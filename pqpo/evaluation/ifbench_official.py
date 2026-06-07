@@ -10,8 +10,14 @@ satisfaction vector.
 Install for a real run (one-time):
 
     git clone https://github.com/allenai/IFBench
-    # add its instruction-following eval module to PYTHONPATH, e.g.:
-    export PYTHONPATH="$PYTHONPATH:/path/to/IFBench/IFBench"   # dir with instructions_registry.py
+    pip install -r IFBench/requirements.txt        # checker deps (spacy, nltk, ...)
+    export IFBENCH_DIR=/abs/path/to/IFBench        # the REPO ROOT (where
+                                                   # instructions_registry.py lives)
+
+``instructions_registry.py`` is at the repo ROOT and does ``import instructions``
+(also root), so the repo root — not a subdirectory — must be importable. Setting
+``IFBENCH_DIR`` is the most robust option; ``export PYTHONPATH=$PYTHONPATH:/abs/
+path/to/IFBench`` also works.
 
 If the registry is not importable, callers fall back to the built-in verifier
 subset in ``ifbench.py`` (approximate; only covers a handful of constraint types)
@@ -19,6 +25,8 @@ and should treat scores as a lower-bound proxy, not official IFBench numbers.
 """
 from __future__ import annotations
 
+import os
+import sys
 from functools import lru_cache
 from typing import Optional
 
@@ -27,13 +35,16 @@ from typing import Optional
 def load_registry():
     """Return the official instruction registry module, or None if unavailable.
 
-    Tries the common import paths used by the IFEval/IFBench harnesses."""
+    Honors $IFBENCH_DIR (the cloned repo root) by inserting it on sys.path, then
+    tries the import paths used by the IFBench / IFEval harnesses."""
+    d = os.environ.get("IFBENCH_DIR")
+    if d and os.path.isdir(d) and d not in sys.path:
+        sys.path.insert(0, d)
     candidates = [
+        "instructions_registry",                       # IFBench repo root
         "instruction_following_eval.instructions_registry",
-        "instructions_registry",
         "ifbench.instructions_registry",
         "IFBench.instructions_registry",
-        "eval.instruction_following_eval.instructions_registry",
     ]
     for path in candidates:
         try:
