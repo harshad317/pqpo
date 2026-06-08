@@ -147,7 +147,11 @@ def run_one_benchmark(name, args, sel_methods, gen_methods, mipro_auto):
     ari = mean_pairwise_metric(boot, "ari")
 
     def held(p):
-        return np.array([mod.scorer.score_one(p, e, "final_test") for e in mod.test_ex])
+        # Parallelise across test items (the dominant real-model cost). Cached
+        # results return instantly; --workers controls concurrency.
+        return np.array(thread_map(
+            lambda e: mod.scorer.score_one(p, e, "final_test"),
+            mod.test_ex, workers=args.workers, progress=False))
 
     # Per-prompt held-out (for the oracle reference + distance-transfer table) scores
     # EVERY pool prompt on the full test set — costly on real models. --skip-transfer
@@ -161,6 +165,15 @@ def run_one_benchmark(name, args, sel_methods, gen_methods, mipro_auto):
         tbl = distance_transfer_table([p.prompt_id for p in pool], fps, embeddings,
                                       {p.prompt_id: p.prompt_text for p in pool}, per_prompt_ho)
         transfer = {k: spearman(x, y)[0] for k, (x, y) in tbl.items()}
+
+    # Optional cache pre-warm: evaluate the pool x dev matrix in parallel up front
+    # (Sec 5.5 precompute) so the sequential selector dev-evals become cache hits.
+    # Trades dollar cost (evaluates more pairs than any single budget uses) for a
+    # large wall-clock speedup; the budget meter still limits algorithm-visible evals.
+    if args.prewarm:
+        pairs = [(p, e) for p in pool for e in mod.dev_ex]
+        thread_map(lambda pe: mod.scorer.score_one(pe[0], pe[1], "selector_dev"),
+                   pairs, workers=args.workers, desc=f"{name} prewarm dev-matrix")
 
     # ---- run methods ----
     n_cells, sizes_c = len(cells), [c.size for c in cells]
@@ -299,10 +312,18 @@ def main():
     ap.add_argument("--n-pool", type=int, default=48)
     ap.add_argument("--n-profiles", type=int, default=10)
     ap.add_argument("--n-boot", type=int, default=15)
+    ap.add_argument("--if-shape", dest="if_shape", action="store_true", default=True,
+                    help="IFBench: include coarse response-length in the fingerprint")
+    ap.add_argument("--no-if-shape", dest="if_shape", action="store_false",
+                    help="IFBench: constraint-satisfaction only (no response shape)")
     ap.add_argument("--report-json", nargs="?", const="__auto__", default=None,
                     metavar="PATH",
                     help="write all results to a JSON file (give a path, or pass the "
                          "flag alone for artifacts/benchmark_report_<timestamp>.json)")
+    ap.add_argument("--prewarm", action="store_true",
+                    help="parallel-evaluate the pool x dev matrix up front to warm "
+                         "the cache, so the selector sweep is cache hits (big "
+                         "wall-clock win on real models; raises dollar cost)")
     ap.add_argument("--skip-transfer", action="store_true",
                     help="skip the per-prompt held-out oracle/distance-transfer "
                          "analysis (scores every pool prompt on the full test set); "

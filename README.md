@@ -180,7 +180,14 @@ shared set of flags via `pqpo/cli.py`:
 --n-sentinel N                      sentinel probes (longer fingerprint = finer cells)
 --report-json [PATH]                write all results to JSON (auto path if omitted)
 --skip-transfer                     skip the costly per-prompt oracle/transfer analysis
+--prewarm                           parallel-evaluate pool x dev up front (sweep = cache hits)
+--no-if-shape                       IFBench: constraint-satisfaction only (no response shape)
 ```
+
+For real runs, `--workers N` parallelises held-out scoring and (with `--prewarm`)
+the selector dev-evaluations — together these turn a multi-hour sequential sweep
+into minutes. `--prewarm` raises dollar cost (it evaluates the full pool×dev
+matrix) but the budget meter still limits each selector's algorithm-visible evals.
 
 The sweep progress bar shows the metric live (`… sweep [accuracy]: … pqpo=0.79
 leader=APE:0.81`). `--report-json` writes a machine-readable file with, per

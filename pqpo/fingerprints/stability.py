@@ -44,9 +44,14 @@ def bootstrap_clusterings(fingerprints, cluster_fn, n_boot: int, rng) -> list[li
 
 
 def mean_pairwise_metric(clusterings: list[list[int]], metric: str = "ari") -> float:
+    import warnings
     fn = {"ari": adjusted_rand_score, "nmi": normalized_mutual_info_score}[metric]
     vals = []
-    for i in range(len(clusterings)):
-        for j in range(i + 1, len(clusterings)):
-            vals.append(fn(clusterings[i], clusterings[j]))
+    with warnings.catch_warnings():
+        # ARI/NMI warn when #clusters is high vs #samples (many singleton cells);
+        # that's a valid clustering here, not a misuse — silence the noise.
+        warnings.simplefilter("ignore")
+        for i in range(len(clusterings)):
+            for j in range(i + 1, len(clusterings)):
+                vals.append(fn(clusterings[i], clusterings[j]))
     return float(np.mean(vals)) if vals else 1.0

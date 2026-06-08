@@ -142,17 +142,18 @@ class IFBehaviorFingerprintExtractor:
                              {"if_item": item})
             trace = executor.run_prompt_on_example(prompt, ex, call_type="sentinel")
             sat = check_item(trace.output_text, item)
-            # Response-shape signal: length + a coarse format signature, so prompts
-            # discriminate even when constraint-satisfaction is uniformly low (the
-            # common IFBench regime). Included via the shape/token distance terms.
+            # Coarse response-shape signal: the length BUCKET only (~7 values),
+            # folded into the shape term (weight 0.10) via the error tag. This
+            # breaks ties between identical-constraint prompts without exploding
+            # into singleton cells. Raw token counts are deliberately NOT used
+            # (continuous -> over-discrimination).
             lb = bucket_output_length(trace.output_tokens) if self.use_shape else 0
             for s in sat:
-                answers.append("sat" if s else "unsat")
+                answers.append("sat" if s else "unsat")          # d_answer: constraints only
                 fmt.append(True)
                 refusal.append(trace.output_text.strip() == "")
                 errs.append(("sat" if s else "unsat") + (f"|L{lb}" if self.use_shape else ""))
-                lenb.append(lb); tok.append(trace.output_tokens if self.use_shape else 0)
-                lat.append(0)
+                lenb.append(0); tok.append(0); lat.append(0)
         return BehaviorFingerprint(
             prompt_id=prompt.prompt_id, task_id=prompt.task_id,
             normalized_answers=answers, format_validity=fmt, refusal_flags=refusal,

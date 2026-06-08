@@ -129,7 +129,7 @@ def setup_code(name, args, sizes, ledger, rng) -> Modality:
 
 def setup_ifbench(name, args, sizes, ledger, rng) -> Modality:
     simulated = args.source == "sim"
-    extractor = IFBehaviorFingerprintExtractor()
+    extractor = IFBehaviorFingerprintExtractor(use_shape=getattr(args, "if_shape", True))
     if simulated:
         n_items = sizes["n_sentinel"] + sizes["n_dev"] + sizes["n_test"] + 20
         sim, items = build_sim_if_target(sizes["n_profiles"], n_items, rng,
