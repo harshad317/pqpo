@@ -148,6 +148,24 @@ def run_one_benchmark(name, args, sel_methods, gen_methods, mipro_auto):
                                  n_boot=args.n_boot, rng=np.random.default_rng(2))
     ari = mean_pairwise_metric(boot, "ari")
 
+    if args.diagnose_only:
+        metrics_table(f"[{name}] phenotype quotient (diagnose-only)",
+                      ["metric", "value"],
+                      [["prompts / cells", f"{len(pool)} / {len(cells)}"],
+                       ["compression", f"{1 - len(cells)/len(pool):.2f}"],
+                       ["cross-lineage redundancy", f"{redundancy:.3f}"],
+                       ["cluster stability ARI", f"{ari:.3f}"],
+                       ["n_sentinel", str(args.n_sentinel)],
+                       ["if_shape", str(getattr(args, 'if_shape', None))]])
+        return {"benchmark": name, "modality": mod.modality,
+                "metric": mod.metric_name, "n_prompts": len(pool),
+                "n_cells": len(cells), "compression": 1 - len(cells) / len(pool),
+                "redundancy": redundancy, "cluster_stability_ari": ari,
+                "quotient_diagnostics": quotient_diag, "aubc_by_method": {},
+                "n_sentinel": args.n_sentinel,
+                "if_shape": getattr(args, "if_shape", None),
+                "dollar_cost": ledger.aggregate_all()["dollar_cost"]}
+
     def held(p):
         # Parallelise across test items (the dominant real-model cost). Cached
         # results return instantly; --workers controls concurrency.
@@ -363,6 +381,10 @@ def main():
                     help="parallel-evaluate the pool x dev matrix up front to warm "
                          "the cache, so the selector sweep is cache hits (big "
                          "wall-clock win on real models; raises dollar cost)")
+    ap.add_argument("--diagnose-only", action="store_true",
+                    help="stop after pool build + fingerprints + quotient "
+                         "diagnostics (no dev/test evals, no selector sweep). "
+                         "Cheap way to ablate --n-sentinel / fingerprint settings.")
     ap.add_argument("--skip-transfer", action="store_true",
                     help="skip the per-prompt held-out oracle/distance-transfer "
                          "analysis (scores every pool prompt on the full test set); "

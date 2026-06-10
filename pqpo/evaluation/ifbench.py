@@ -259,12 +259,17 @@ def load_ifbench(n_sentinel=12, n_dev=80, n_test=100, seed=0, source="hf",
     rng = np.random.default_rng(seed)
     idx = rng.permutation(len(items))
     n = len(items)
-    n_sentinel = min(n_sentinel, n)
-    n_dev = min(n_dev, max(0, n - n_sentinel))
-    n_test = max(0, n - n_sentinel - n_dev) if (n_sentinel + n_dev + n_test) > n else n_test
+    # dev/test occupy a FIXED region at the front of the permutation; sentinels
+    # are drawn from the tail. Changing n_sentinel therefore never shifts dev or
+    # test, so cached pool-generation and dev/test evals survive sentinel-size
+    # ablations. (IFBench_test has 300 items: with n_dev=100, n_test=140 the
+    # sentinel panel can be at most 60.)
+    n_dev = min(n_dev, n)
+    n_test = min(n_test, max(0, n - n_dev))
+    n_sentinel = min(n_sentinel, max(0, n - n_dev - n_test))
     g = lambda a, b: [items[j] for j in idx[a:b]]
-    return (g(0, n_sentinel), g(n_sentinel, n_sentinel + n_dev),
-            g(n_sentinel + n_dev, n_sentinel + n_dev + n_test))
+    return (g(n_dev + n_test, n_dev + n_test + n_sentinel),
+            g(0, n_dev), g(n_dev, n_dev + n_test))
 
 
 def _map_ifeval_instructions(id_list, kwargs_list):
