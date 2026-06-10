@@ -13,6 +13,7 @@ for ``--source hf`` a billed provider + the real dataset loaders are used.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -58,6 +59,18 @@ class Modality:
     metric_name: str
 
 
+def _disk_cache(name: str, args) -> APICache:
+    """Disk-backed response cache for billed runs: reruns replay at zero marginal
+    cost (cache hits are still counted as logical calls by the CostLedger)."""
+    model = (args.model or "unknown").replace("/", "_")
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(here, "artifacts", "cache", f"{name}_{model}.jsonl")
+    cache = APICache(path)
+    if len(cache):
+        print(f"  [cache] loaded {len(cache)} cached responses from {path}")
+    return cache
+
+
 def _profiles_or_placeholder(simulated, n_profiles, rng):
     if simulated:
         return build_default_profiles(rng, n_profiles), None
@@ -83,7 +96,7 @@ def setup_label(name, args, sizes, ledger, rng) -> Modality:
         profile_ids = list(profiles.keys())
     else:
         model_cfg = build_model_config(args, simulated=False)
-        ex = APIExecutor(model_cfg, ledger, APICache(None), name)
+        ex = APIExecutor(model_cfg, ledger, _disk_cache(name, args), name)
         profile_ids = []
 
     scorer = Scorer(ex, normalizer)
@@ -114,7 +127,7 @@ def setup_code(name, args, sizes, ledger, rng) -> Modality:
                               n_test=sizes["n_test"], seed=0, source="hf")
         problems = load.sentinels + load.dev + load.test
         model_cfg = build_model_config(args, simulated=False)
-        ex = APIExecutor(model_cfg, ledger, APICache(None), name)
+        ex = APIExecutor(model_cfg, ledger, _disk_cache(name, args), name)
         profile_ids = []
     s, d, t = (problems[:sizes["n_sentinel"]],
                problems[sizes["n_sentinel"]:sizes["n_sentinel"] + sizes["n_dev"]],
@@ -145,7 +158,7 @@ def setup_ifbench(name, args, sizes, ledger, rng) -> Modality:
         s, d, t = load_ifbench(sizes["n_sentinel"], sizes["n_dev"], sizes["n_test"],
                                seed=0, source="hf")
         model_cfg = build_model_config(args, simulated=False)
-        ex = APIExecutor(model_cfg, ledger, APICache(None), name)
+        ex = APIExecutor(model_cfg, ledger, _disk_cache(name, args), name)
         profile_ids = []
     scorer = IFScorer(ex, strict=True)
     fingerprint = lambda prompt: extractor.extract(prompt, s, ex)

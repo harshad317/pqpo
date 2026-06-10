@@ -139,8 +139,10 @@ def run_one_benchmark(name, args, sel_methods, gen_methods, mipro_auto):
                           workers=args.workers, desc=f"{name} fingerprints"))
     cl = QuotientClusterer()
     D, ids = cl.pairwise_distance(fps)
-    tau, _ = cl.choose_tau_by_stability(fps, n_boot=args.n_boot, rng=np.random.default_rng(1))
+    tau, tau_diag = cl.choose_tau_by_stability(fps, n_boot=args.n_boot,
+                                               rng=np.random.default_rng(1))
     cells = cl.cluster(D, ids, tau, fps, sm)
+    quotient_diag = report_quotient_diagnostics(name, cl, D, ids, cells, tau, tau_diag)
     redundancy = behavioral_redundancy_rate(cells, sm)
     boot = bootstrap_clusterings(fps, lambda Dm: agglomerative_labels(Dm, tau),
                                  n_boot=args.n_boot, rng=np.random.default_rng(2))
@@ -206,8 +208,45 @@ def run_one_benchmark(name, args, sel_methods, gen_methods, mipro_auto):
                             leader=f"{leader}:{means.get(leader, 0):.3f}")
     bar.close()
 
-    return report_one(name, args, mod, pool, cells, redundancy, ari, transfer,
-                      heldout, perex, per_prompt_ho, ledger)
+    summary = report_one(name, args, mod, pool, cells, redundancy, ari, transfer,
+                         heldout, perex, per_prompt_ho, ledger)
+    summary["quotient_diagnostics"] = quotient_diag
+    return summary
+
+
+def report_quotient_diagnostics(name, cl, D, ids, cells, tau, tau_diag):
+    """Print the tau stability grid + cell-size distribution and flag a degenerate
+    quotient (e.g. one giant cell / compression outside the target range), which
+    makes PQPO structurally indistinguishable from its clustering controls."""
+    n = len(ids)
+    n_unique = len(set(agglomerative_labels(D, 1e-9).tolist())) if n > 1 else 1
+    cell_sizes = sorted((c.size for c in cells), reverse=True)
+    max_frac = cell_sizes[0] / n if n else 0.0
+    comp = 1 - len(cells) / n if n else 0.0
+    if tau_diag:
+        metrics_table(
+            f"[{name}] tau stability grid (chosen tau={tau})",
+            ["tau", "ARI", "compression", "max cell frac", "mean #cells"],
+            [[f"{d['tau']:.2f}", f"{d['ari']:.2f}", f"{d['compression']:.2f}",
+              f"{d['max_cluster_frac']:.2f}", f"{d['mean_n_clusters']:.1f}"]
+             for d in tau_diag])
+    top = ", ".join(str(s) for s in cell_sizes[:10])
+    print(f"  cell sizes (top 10): [{top}] | unique fingerprints (d=0): "
+          f"{n_unique}/{n} | off-diag distance: median="
+          f"{np.median(D[np.triu_indices(n, 1)]):.3f} "
+          f"max={D.max():.3f}")
+    lo, hi = cl.compression_range
+    degenerate = not (lo <= comp <= hi) or max_frac > cl.max_cluster_frac
+    if degenerate:
+        print(f"  [quotient WARNING] compression {comp:.2f} outside target "
+              f"[{lo:.2f},{hi:.2f}] or max cell frac {max_frac:.2f} > "
+              f"{cl.max_cluster_frac:.2f}: tau selection fell back. The fingerprint "
+              f"is likely too coarse (near-identical vectors -> giant cells; raise "
+              f"--n-sentinel or enrich the fingerprint) or too fine. Selector "
+              f"comparisons in this regime are NOT a valid test of PQPO.")
+    return {"tau": tau, "tau_grid": tau_diag, "cell_sizes": cell_sizes,
+            "n_unique_fingerprints": n_unique, "max_cell_frac": max_frac,
+            "degenerate": degenerate}
 
 
 def report_one(name, args, mod, pool, cells, redundancy, ari, transfer,
