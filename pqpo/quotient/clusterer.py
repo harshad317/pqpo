@@ -31,13 +31,27 @@ def agglomerative_labels(D: np.ndarray, tau: float) -> np.ndarray:
 
 
 class QuotientClusterer:
+    """tau is accepted when bootstrap ARI >= ari_threshold AND the clustering is
+    *informative*: cell count within a pool-size-aware band (>= min_cells and
+    <= cell_frac_hi * n, i.e. >= ~1/cell_frac_hi prompts per cell on average)
+    and no single giant cell (max_cluster_frac). A fixed compression range is
+    deliberately NOT used: it implicitly assumes one pool size (0.20-0.60 was
+    tuned for 240-prompt pools and rejects healthy 16-20-cell quotients on
+    80-prompt pools)."""
+
     def __init__(self, ari_threshold: float = 0.65, weights: dict = None,
-                 compression_range: tuple[float, float] = (0.20, 0.60),
-                 max_cluster_frac: float = 0.75):
+                 min_cells: int = 6, cell_frac_hi: float = 0.45,
+                 max_cluster_frac: float = 0.60):
         self.ari_threshold = ari_threshold
         self.weights = weights
-        self.compression_range = compression_range
+        self.min_cells = min_cells
+        self.cell_frac_hi = cell_frac_hi
         self.max_cluster_frac = max_cluster_frac
+
+    def cell_band(self, n_prompts: int) -> tuple[float, float]:
+        lo = float(min(self.min_cells, max(2, n_prompts // 2)))
+        hi = float(max(lo, self.cell_frac_hi * n_prompts))
+        return lo, hi
 
     def pairwise_distance(self, fingerprints, order=None):
         return pairwise_distance_matrix(fingerprints, order=order, weights=self.weights)
@@ -61,16 +75,19 @@ class QuotientClusterer:
             rec = dict(tau=tau, ari=ari, nmi=nmi, compression=compression,
                        max_cluster_frac=max_frac, mean_n_clusters=n_clusters)
             diagnostics.append(rec)
-            lo, hi = self.compression_range
-            if (ari >= self.ari_threshold and lo <= compression <= hi
+            lo, hi = self.cell_band(n_prompts)
+            if (ari >= self.ari_threshold and lo <= n_clusters <= hi
                     and max_frac <= self.max_cluster_frac):
                 candidates.append(rec)
         if not candidates:
-            # Fallback: pick the stable threshold with compression closest to mid-range
-            mid = sum(self.compression_range) / 2
+            # Fallback: among stable rows, pick the cell count closest to the
+            # middle of the band (in log space, since cell counts span decades).
+            lo, hi = self.cell_band(n_prompts)
+            mid = float(np.sqrt(lo * hi))
             viable = [d for d in diagnostics if d["ari"] >= self.ari_threshold]
             pool = viable or diagnostics
-            best = min(pool, key=lambda d: abs(d["compression"] - mid))
+            best = min(pool, key=lambda d: abs(np.log(max(d["mean_n_clusters"], 1.0))
+                                               - np.log(mid)))
             return best["tau"], diagnostics
         best = sorted(candidates, key=lambda d: d["tau"])[0]  # smallest stable tau
         return best["tau"], diagnostics

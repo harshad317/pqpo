@@ -253,15 +253,16 @@ def report_quotient_diagnostics(name, cl, D, ids, cells, tau, tau_diag):
           f"{n_unique}/{n} | off-diag distance: median="
           f"{np.median(D[np.triu_indices(n, 1)]):.3f} "
           f"max={D.max():.3f}")
-    lo, hi = cl.compression_range
-    degenerate = not (lo <= comp <= hi) or max_frac > cl.max_cluster_frac
+    lo, hi = cl.cell_band(n)
+    degenerate = not (lo <= len(cells) <= hi) or max_frac > cl.max_cluster_frac
     if degenerate:
-        print(f"  [quotient WARNING] compression {comp:.2f} outside target "
-              f"[{lo:.2f},{hi:.2f}] or max cell frac {max_frac:.2f} > "
-              f"{cl.max_cluster_frac:.2f}: tau selection fell back. The fingerprint "
-              f"is likely too coarse (near-identical vectors -> giant cells; raise "
-              f"--n-sentinel or enrich the fingerprint) or too fine. Selector "
-              f"comparisons in this regime are NOT a valid test of PQPO.")
+        print(f"  [quotient WARNING] {len(cells)} cells outside target band "
+              f"[{lo:.0f},{hi:.0f}] for {n} prompts, or max cell frac "
+              f"{max_frac:.2f} > {cl.max_cluster_frac:.2f}: tau selection fell "
+              f"back. The fingerprint is likely too coarse (near-identical "
+              f"vectors -> giant cells; raise --n-sentinel or enrich the "
+              f"fingerprint) or too fine. Selector comparisons in this regime "
+              f"are NOT a valid test of PQPO.")
     return {"tau": tau, "tau_grid": tau_diag, "cell_sizes": cell_sizes,
             "n_unique_fingerprints": n_unique, "max_cell_frac": max_frac,
             "degenerate": degenerate}
